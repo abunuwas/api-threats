@@ -15,7 +15,9 @@ from auth import validate_token, UserClaims
 
 AUTH0_CLIENT_SECRET = os.getenv("AUTH0_CLIENT_SECRET")
 
-assert AUTH0_CLIENT_SECRET is not None, "AUTH0_CLIENT_SECRET environment variable needed."
+assert (
+    AUTH0_CLIENT_SECRET is not None
+), "AUTH0_CLIENT_SECRET environment variable needed."
 
 server = FastAPI()
 
@@ -80,23 +82,28 @@ def get_access_token(code: str):
         f"&code={code}"
         "&redirect_uri=http://localhost:8000/token"
     )
-    headers = {'content-type': "application/x-www-form-urlencoded"}
-    response = requests.post("https://apithreats.eu.auth0.com/oauth/token", payload, headers=headers)
+    headers = {"content-type": "application/x-www-form-urlencoded"}
+    response = requests.post(
+        "https://apithreats.eu.auth0.com/oauth/token", payload, headers=headers
+    )
     return response.json()["access_token"]
 
 
 security = HTTPBearer()
 
 
-def validate_access(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+def validate_access(
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]
+):
     token_payload = validate_token(credentials.credentials)
     return UserClaims(sub=token_payload["sub"])
 
 
-@server.post("/orders", response_model=GetOrderSchema, status_code=status.HTTP_201_CREATED)
+@server.post(
+    "/orders", response_model=GetOrderSchema, status_code=status.HTTP_201_CREATED
+)
 def place_order(
-        order_details: PlaceOrderSchema,
-        user_claims: UserClaims = Depends(validate_access)
+    order_details: PlaceOrderSchema, user_claims: UserClaims = Depends(validate_access)
 ):
     with session_maker() as session:
         order = OrderModel(
@@ -115,20 +122,17 @@ def place_order(
 
 @server.get("/orders/{order_id}")
 def get_order_details(
-        order_id: uuid.UUID,
-        user_claims: UserClaims = Depends(validate_access)
+    order_id: uuid.UUID, user_claims: UserClaims = Depends(validate_access)
 ):
     with session_maker() as session:
         order = session.scalar(
             select(OrderModel).where(
-                OrderModel.id == order_id,
-                OrderModel.user == user_claims.sub
+                OrderModel.id == order_id, OrderModel.user == user_claims.sub
             )
         )
         if order is None:
             raise HTTPException(
-                status_code=404,
-                detail=f"Order with ID {order_id} not found."
+                status_code=404, detail=f"Order with ID {order_id} not found."
             )
     return {
         "id": order.id,

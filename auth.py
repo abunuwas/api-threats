@@ -25,14 +25,12 @@ def validate_token(token):
             algorithms="RS256",
         )
     except (
-            ExpiredSignatureError,
-            JWTError,
-            JWTClaimsError,
-            JWSError,
+        ExpiredSignatureError,
+        JWTError,
+        JWTClaimsError,
+        JWSError,
     ) as error:
-        raise HTTPException(
-            status_code=401, detail=str(error)
-        )
+        raise HTTPException(status_code=401, detail=str(error))
 
 
 class UserClaims(BaseModel):
