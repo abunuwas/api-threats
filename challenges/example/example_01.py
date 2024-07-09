@@ -4,6 +4,7 @@ from typing import Optional
 
 import requests
 from fastapi import HTTPException, Depends, FastAPI
+from jinja2 import Template
 from pydantic import BaseModel, ConfigDict
 from pydantic_core import Url
 from sqlalchemy import select, text
@@ -53,11 +54,16 @@ class ListOrders(BaseModel):
     orders: list[GetOrderSchema]
 
 
+class OrderByEnum(enum.Enum):
+    name = "name"
+    price = "price"
+
+
 @server.get("/products", response_model=ListProducts)
 def list_products(
     page: Optional[int] = 1,
     per_page: Optional[int] = 10,
-    order_by: Optional[str] = "price",  # name
+    order_by: Optional[str] = "price",
 ):
     # pagination attack: request 1M
     # schema enumeration: stock, discount
@@ -74,19 +80,17 @@ def list_products(
 
 @server.get("/orders", response_model=ListOrders)
 def list_orders(
-    user_claims: UserClaims = Depends(authorize_access), status: Optional[str] = "paid"
+    user_claims: UserClaims = Depends(authorize_access), status: Optional[str] = None
 ):
     # BOLA
     # injection param: ' OR 1=1--
-    # change this to include also personal user details and credit card details
     with session_maker() as session:
-        orders = session.execute(
-            text(
-                f"select * from 'order' "
-                f"where status = '{status or ''}' "
-                f"and user_id = '{user_claims.sub}';"
-            )
-        )
+        query = f"select * from 'order' " f"where user_id = '{user_claims.sub}' "
+        if status is not None:
+            query += f"and status = '{status}'"
+        query += ";"
+
+        orders = session.execute(text(query))
         return {"orders": orders}
 
 
@@ -95,14 +99,14 @@ def list_orders(
     status_code=status.HTTP_201_CREATED,
     response_model=GetOrderSchema,
 )
-def place_order(order_details: PlaceOrderSchema):
-    # update the product stock to go down
-    # add wallet to users like in crapi, and it comes down with purchases
+def place_order(
+    order_details: PlaceOrderSchema, user_claims: UserClaims = Depends(authorize_access)
+):
     with session_maker() as session:
         order = OrderModel(
             product_id=order_details.product_id,
             amount=order_details.amount,
-            user_id=str(uuid.uuid4()),
+            user_id=user_claims.sub,
             status=OrderStatusEnum.pending.value,
         )
         session.add(order)
@@ -159,6 +163,14 @@ def fetch_external_data(url: Url):
     return requests.get(url).content
 
 
+@server.get("/fetch-external-data-safe")
+def fetch_external_data_safe(url: Url):
+    # ssrf
+    if "localhost" in str(url):
+        raise HTTPException(422, "Requests to localhost not allowed")
+    return requests.get(url).content
+
+
 @server.get("/companies", response_class=HTMLResponse)
 def companies():
     companies = requests.get("http://localhost:8000/example_01/uk-companies").json()
@@ -200,12 +212,55 @@ def companies():
     return html_content
 
 
-@server.get("/secrets", include_in_schema=False)
+@server.get("/companies-safe", response_class=HTMLResponse)
+def companies_safe():
+    response = requests.get("http://localhost:8000/example_01/uk-companies")
+    response.raise_for_status()  # Ensure we catch any errors from the request
+    companies = response.json()
+
+    template = Template(
+        """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Company List</title>
+        <style>
+            body { font-family: Arial, sans-serif; }
+            table { width: 50%; margin: auto; border-collapse: collapse; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f2f2f2; }
+        </style>
+    </head>
+    <body>
+        <h1 style="text-align:center;">Company List</h1>
+        <table>
+            <tr>
+                <th>Company Name</th>
+                <th>Director</th>
+            </tr>
+            {% for company in companies %}
+            <tr>
+                <td>{{ company.name|e }}</td>
+                <td>{{ company.director|e }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </body>
+    </html>
+    """
+    )
+
+    html_content = template.render(companies=companies["companies"])
+
+    return HTMLResponse(content=html_content)
+
+
+@server.get("/example_01/secrets", include_in_schema=False)
 def leak_secrets():
     return "super secret!"
 
 
-@server.get("/uk-companies", include_in_schema=False)
+@server.get("/example_01/uk-companies", include_in_schema=False)
 def list_uk_companies():
     return {
         "companies": [
