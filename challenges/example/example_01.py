@@ -1,6 +1,5 @@
 import enum
 import uuid
-from datetime import datetime
 from typing import Optional
 
 import requests
@@ -47,7 +46,6 @@ class OrderStatusEnum(str, enum.Enum):
 class GetOrderSchema(PlaceOrderSchema):
     id: uuid.UUID
     user_id: str
-    created: datetime
     status: OrderStatusEnum
 
 
